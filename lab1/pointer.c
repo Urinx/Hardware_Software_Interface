@@ -81,36 +81,37 @@ INTEGER CODING RULES:
  * Return the size of an integer in bytes.
  */
 int intSize() {
-  int intArray[10];
-  int * intPtr1;
-  int * intPtr2;
-  // TODO: Write code to compute size of an integer.
-
-  return 2;
+	int intArray[10];
+	int * intPtr1;
+	int * intPtr2;
+	// TODO: Write code to compute size of an integer.
+	intPtr1=intArray;
+	intPtr2=intArray+1;
+	return (long)intPtr2+(~(long)intPtr1+1);
 }
 
 /*
  * Return the size of a double in bytes.
  */
 int doubleSize() {
-  double doubArray[10];
-  double * doubPtr1;
-  double * doubPtr2;
-  // TODO: Write code to compute size of a double.
-
-  return 2;
+	double doubArray[10];
+	double * doubPtr1;
+	double * doubPtr2;
+	// TODO: Write code to compute size of a double.
+	return (long)(doubArray+1)+(~(long)doubArray+1);
 }
 
 /*
  * Return the size of a pointer in bytes.
  */
 int pointerSize() {
-  double * ptrArray[10];
-  double ** ptrPtr1;
-  double ** ptrPtr2;
-  // TODO: Write code to compute size of a pointer.
-
-  return 2;
+	double * ptrArray[10];
+	double ** ptrPtr1;
+	double ** ptrPtr2;
+	// TODO: Write code to compute size of a pointer.
+	ptrPtr1=ptrArray;
+	ptrPtr2=ptrArray+1;
+	return (long)ptrPtr2+(~(long)ptrPtr1+1);
 }
 
 /*
@@ -118,13 +119,13 @@ int pointerSize() {
  * pointer arithmetic.
  */
 int changeValue() {
-  int intArray[10];
-  int * intPtr1 = intArray;
-  int * intPtr2;
-  // TODO: Write code to change value of intArray[5] to 351 using only
-  //       intPtr1 and the + operator.
-
-  return intArray[5];
+	int intArray[10];
+	int * intPtr1 = intArray;
+	int * intPtr2;
+	// TODO: Write code to change value of intArray[5] to 351 using only
+	//       intPtr1 and the + operator.
+	*(intPtr1+5)=351;
+	return intArray[5];
 }
 
 
@@ -135,8 +136,11 @@ int changeValue() {
  * Operators / and % and loops are NOT allowed.
  */
 int withinSameBlock(int * ptr1, int * ptr2) {
-  // TODO
-  return 2;
+	// TODO
+	int mask=1<<31>>25;//mask=0xffffffc0
+	int a=ptr1;
+	int b=ptr2;
+	return (a&mask)==(b&mask);
 }
 
 /*
@@ -144,8 +148,13 @@ int withinSameBlock(int * ptr1, int * ptr2) {
  * 0 otherwise.
  */
 int withinArray(int * intArray, int size, int * ptr) {
-  // TODO
-  return 2;
+	// TODO
+	int a=ptr;
+	int b=intArray;
+	int c=intArray+size+~0;
+	int d=a+~b+1;
+	int e=c+~a+1;
+	return d>>31==0 & e>>31==0;
 }
 /*
  * Return x with the n bits that begin at position p inverted (i.e.,
@@ -153,6 +162,7 @@ int withinArray(int * intArray, int size, int * ptr) {
  * the indices of x to begin with the low-order bit numbered as 0.
  */
 int invert(int x, int p, int n) {
-  // TODO
-  return 2;
+	// TODO
+	int mask=1<<31>>32+~(p+n) ^ ~0<<p;
+	return x^mask;
 }

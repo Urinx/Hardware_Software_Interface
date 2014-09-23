@@ -158,12 +158,10 @@ int thirdBits(void) {
  */
 int fitsBits(int x, int n) {
 	int a=~0;//a=-1
-	int minus_x=~x+1;//x=-x;
-	int max=(1<<(n+a))+a;
-	int minus_min=1<<(n+a);
-	int b= ~(((max+minus_x)>>31 & 1) | ((x+minus_min)>>31 & 1));
-	printf("%d\n",b);
-	return 0;
+	x=x>>(n+a);
+	//x=0,return !x
+	//x=-1,return !(x^a)
+	return !x | !(x^a);
 }
 /* 
  * sign - return 1 if positive, 0 if zero, and -1 if negative
@@ -174,8 +172,8 @@ int fitsBits(int x, int n) {
  *  Rating: 2
  */
 int sign(int x) {
-	int mask=0xff;
-	return 2;
+	int a=x>>31;
+	return a+((a+1)&(!!x));
 }
 /* 
  * getByte - Extract byte n from word x
@@ -186,7 +184,8 @@ int sign(int x) {
  *   Rating: 2
  */
 int getByte(int x, int n) {
-  return 2;
+	int mask=0xFF;
+	return x>>(n<<3) & mask;
 }
 // Rating: 3
 /* 
@@ -198,7 +197,8 @@ int getByte(int x, int n) {
  *   Rating: 3 
  */
 int logicalShift(int x, int n) {
-  return 2;
+	int a=(x>>31&1)<<32+~n;
+	return (x^a<<n)>>n^a;
 }
 /* 
  * addOK - Determine if can compute x+y without overflow
@@ -209,7 +209,12 @@ int logicalShift(int x, int n) {
  *   Rating: 3
  */
 int addOK(int x, int y) {
-  return 2;
+	// #>0,$<0
+	// #+#->$
+	// $+$->#
+	int sum=x+y;
+	int a=x>>31;
+	return !!(a^y>>31) | !(a^sum>>31);
 }
 // Rating: 4
 /* 
@@ -220,7 +225,10 @@ int addOK(int x, int y) {
  *   Rating: 4 
  */
 int bang(int x) {
-  return 2;
+	int a,b;
+	a=x>>31;
+	b=~x+1>>31;
+	return (a|b)+1;
 }
 // Extra Credit: Rating: 3
 /* 
@@ -231,7 +239,7 @@ int bang(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+	return (~!!x+1&y)+(~!x+1&z);
 }
 // Extra Credit: Rating: 4
 /*
@@ -243,5 +251,5 @@ int conditional(int x, int y, int z) {
  *   Rating: 4
  */
 int isPower2(int x) {
-  return 2;
+	return !(!x|x>>31 | x&x+~0);
 }
